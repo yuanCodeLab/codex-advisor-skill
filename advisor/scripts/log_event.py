@@ -45,7 +45,7 @@ USAGE_KEYS = (
     "input_tokens",
     "output_tokens",
     "cached_input_tokens",
-    "cache_write_tokens",
+    "cache_write_input_tokens",
     "cost_amount",
     "currency",
     "source",
@@ -121,7 +121,27 @@ def cmd_start(args) -> None:
         "task_label": args.task_label,
         "main_model": args.main_model,
         "main_effort": args.main_effort,
+        # 触发来源与计时口径（metrics.md）
+        "invocation": args.invocation,
+        "trigger_reason": args.trigger_reason,
+        "timing_scope": args.timing_scope,
+        # 用量归属所需的关联 ID（collect_usage.py），未确认一律 null
+        "thread_id": args.thread_id,
+        "turn_id": args.turn_id,
+        "rollout_path": args.rollout_path,
     }
+    # 对照字段仅在用户明确指定对照任务时出现（comparison.md）
+    if args.comparison_id or args.mode:
+        if not (args.comparison_id and args.mode):
+            die("comparison runs need both --comparison-id and --mode")
+        conditions = (
+            load_json_file(args.comparison_conditions_file, "comparison_conditions")
+            if args.comparison_conditions_file
+            else None
+        )
+        event["comparison_id"] = args.comparison_id
+        event["mode"] = args.mode
+        event["comparison_conditions"] = conditions
     try:
         append_event(event)
     except Exception as exc:  # noqa: BLE001
@@ -210,12 +230,20 @@ def find_start_timestamp(run_id: str):
 
 
 def cmd_report(args) -> None:
-    starts, ends = {}, {}
+    starts, ends, snapshots = {}, {}, {}
     for ev in iter_events():
         rid = ev.get("run_id")
         if not rid:
             continue
-        (starts if ev.get("event") == "start" else ends)[rid] = ev
+        kind = ev.get("event")
+        if kind == "start":
+            starts[rid] = ev
+        elif kind == "end":
+            ends[rid] = ev
+        elif kind == "usage_snapshot":
+            # collect_usage.py 写入，只保留最新快照，不累加。
+            snapshots[rid] = ev
+        # 其他事件类型（如 comparison_assignment）不影响 start/end 配对。
 
     order = list(starts)
     if args.limit:
@@ -247,6 +275,7 @@ def cmd_report(args) -> None:
                 "runs_that_spawned_an_agent": spawned_runs,
                 "acceptance": acceptance_counts,
                 "runs_with_whole_run_usage": len(usable_usage),
+                "runs_with_usage_snapshot": len([r for r in order if r in snapshots]),
                 "note": "未结束样本不计作成功；无基线对照时不得据此推导节省比例。",
             },
             ensure_ascii=False,
@@ -263,6 +292,19 @@ def main() -> None:
     p_start.add_argument("--task-label", required=True, help="简短脱敏的任务类别")
     p_start.add_argument("--main-model", default=None)
     p_start.add_argument("--main-effort", default=None)
+    p_start.add_argument(
+        "--invocation", choices=("explicit", "automatic"), default=None,
+        help="显式调用还是满足难题条件后自动进入流程")
+    p_start.add_argument("--trigger-reason", default=None, help="简短说明进入流程的原因")
+    p_start.add_argument(
+        "--timing-scope", choices=("whole_task", "advisor_phase"), default=None,
+        help="任务进行中才触发时为 advisor_phase，不倒填之前的耗时")
+    p_start.add_argument("--thread-id", default=None)
+    p_start.add_argument("--turn-id", default=None)
+    p_start.add_argument("--rollout-path", default=None)
+    p_start.add_argument("--comparison-id", default=None, help="仅用户明确指定对照任务时传")
+    p_start.add_argument("--mode", choices=("solo", "advisor"), default=None)
+    p_start.add_argument("--comparison-conditions-file", default=None, help="JSON 对象文件")
     p_start.set_defaults(func=cmd_start)
 
     p_end = sub.add_parser("end", help="记录任务结束")

@@ -11,14 +11,31 @@ PRICES = {
     'gpt-5.6-terra': ([2, .2, 2.5, 12], [4, .4, 5, 18]),
     'gpt-5.6-luna': ([.2, .02, .25, 1.2], [.4, .04, .5, 1.8]),
 }
+# 已知模型但官方定价页未列出，逐个记明原因，避免与"用量字段缺失"混为一谈后静默跳过。
+UNPRICED = {
+    'gpt-reserve': 'not_on_public_pricing_page',      # supported_in_api 但 visibility=hide
+    'gpt-5.3-codex-spark': 'not_api_supported',       # supported_in_api=False，本就无 API 价格
+}
 KEYS = ['input_tokens', 'cached_input_tokens', 'cache_write_input_tokens', 'output_tokens']
 
-def estimate(values, model):
-    if model not in PRICES or any(values[k] is None for k in KEYS):
-        return None
+def pricing_status(values, model):
+    if model is None:
+        return 'model_unknown'
+    if model in UNPRICED:
+        return UNPRICED[model]
+    if model not in PRICES:
+        return 'model_not_in_price_table'
+    if any(values[k] is None for k in KEYS):
+        return 'usage_incomplete'
     i, c, w, o = [values[k] for k in KEYS]
     if min(i, c, w, o) < 0 or c + w > i:
+        return 'usage_inconsistent'
+    return 'priced'
+
+def estimate(values, model):
+    if pricing_status(values, model) != 'priced':
         return None
+    i, c, w, o = [values[k] for k in KEYS]
     parts = [i-c-w, c, w, o]
     return {name: round(sum(n*p for n, p in zip(parts, rates))/1e6, 8)
             for name, rates in zip(['standard_short_usd', 'standard_long_usd'], PRICES[model])}
@@ -96,6 +113,7 @@ def collect(segment):
             'role': segment['role'], 'model': model, 'completed': completed,
             'scope': 'selected_turn' if complete else 'partial', 'usage': values,
             'issues': sorted(set(issues)),
+            'pricing_status': pricing_status(values, model) if complete else 'segment_incomplete',
             'api_equivalent': estimate(values, model) if complete else None}
 
 def main():
