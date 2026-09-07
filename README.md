@@ -2,7 +2,9 @@
 
 `advisor` 是一个需要显式调用的 Codex Skill。它让当前主代理在遇到高影响架构取舍、证据冲突，或经过聚焦排查仍无法定位的问题时，按需创建一个只读的 GPT-6 Astra 顾问进行独立复核。
 
-主代理仍然负责沟通、实现、验证和交付；顾问只提供判断依据，不修改文件、不执行外部变更，也不继续创建子代理。
+主代理仍然负责沟通、实现、验证和交付。顾问被要求只读：不修改文件、不执行外部变更、不继续创建子代理。
+
+需要说明的是，Codex 的 `spawn_agent` 没有沙箱或只读参数，子代理默认继承主代理的全部工具（含写入）并且默认能继续分派。因此上述只读边界由任务包中的指令约束实现，不是平台强制隔离。本 Skill 把这些约束放在任务包首段以提高遵守率，但使用者应知道它属于约定而非沙箱。
 
 ## 设计来源
 
@@ -21,9 +23,23 @@
 ## 环境要求
 
 - 支持本地 Skills 的 Codex 环境。
-- 具备 `spawn_agent` 等协作子代理能力。
-- 账号和当前运行环境能够使用 `gpt-6-astra`。
-- 如果 Astra 或协作工具不可用，Skill 会说明具体限制，并由当前主代理继续完成仍可完成的工作。
+- 在 `~/.codex/config.toml` 中启用多代理：
+
+  ```toml
+  [features]
+  multi_agent = true
+  ```
+
+  这会启用 `spawn_agent`、`wait_agent`、`close_agent` 等工具。
+- 账号和当前运行环境的模型覆盖列表中包含 `gpt-6-astra`（侦察员用 `gpt-5.6-sol`）。该列表由运行环境提供，在部分环境下可能为空。
+- 安装前自检：
+
+  ```bash
+  grep -A3 '^\[features\]' ~/.codex/config.toml
+  python3 -c "import json;print([m['slug'] for m in json.load(open('$HOME/.codex/models_cache.json'))['models']])"
+  ```
+
+- 如果 Astra 或协作工具不可用，Skill 会说明具体限制，并由当前主代理继续完成仍可完成的工作，不会静默替换模型。
 
 ## 安装
 
@@ -68,9 +84,15 @@ advisor/
 ├── SKILL.md
 ├── agents/
 │   └── openai.yaml
-└── references/
-    └── metrics.md
+├── references/
+│   └── metrics.md
+└── scripts/
+    └── log_event.py
 ```
+
+## 版本
+
+本 Skill 通过 Git tag / GitHub Release 标记版本。Codex 的 frontmatter 校验器只接受 `name`、`description`、`license`、`allowed-tools`、`metadata`，因此 SKILL.md 中不写 `version` 字段。更新前请查看仓库 Releases 页确认变更。
 
 ## 使用
 
@@ -108,9 +130,11 @@ $advisor 这个问题经过以下排查仍未定位：
 
 1. 主代理先判断问题是否真的需要独立顾问。
 2. 如果问题属于常规任务，主代理直接完成，不创建顾问。
-3. 如果独立复核有明确价值，主代理创建一个 `gpt-6-astra` 只读顾问。
-4. 主代理审查顾问建议，只采纳有证据支持的内容，并完成必要验证。
-5. 交付时说明实际调用了什么模型、顾问解决了什么、采纳了什么以及验证结果。
+3. 如果独立复核有明确价值，主代理用 `spawn_agent` 创建一个 `gpt-6-astra` 顾问（`fork_turns="none"`，任务包首段写明只读约束）。
+4. 顾问运行期间主代理推进不依赖其结论的工作，只在结论成为关键路径阻塞项时 `wait_agent`。
+5. 拿到结论后立即 `close_agent` 释放并发额度——已完成的代理在关闭前仍占用槽位。
+6. 主代理审查顾问建议，只采纳有证据支持的内容，并完成必要验证。
+7. 交付时说明实际调用了什么模型、顾问解决了什么、采纳了什么以及验证结果。
 
 ## 本地效果记录
 
@@ -120,7 +144,11 @@ $advisor 这个问题经过以下排查仍未定位：
 ${CODEX_HOME:-~/.codex}/advisor-metrics/events.jsonl
 ```
 
+写入由 `advisor/scripts/log_event.py` 完成，它负责 UUID、UTC 时间戳、JSON 序列化、追加写入和写后校验；查看汇总用 `python3 scripts/log_event.py report`。
+
 记录用于评估顾问是否被调用、任务验收结果和可获得的运行数据。它不会保存源码、完整提示词、完整对话、凭证或工具原始输出。没有实际用量证据时，不会虚构 token、费用或节省比例。
+
+关闭与清理：设 `ADVISOR_METRICS=0` 即可完全关闭记录；日志无自动轮转，可随时删除 `events.jsonl` 或整个 `advisor-metrics/` 目录。在只读沙箱等无法写入的环境中，脚本会返回非零并说明原因，任务继续执行，最终如实报告未记录。
 
 ## 为什么必须显式调用
 
