@@ -29,7 +29,14 @@
 
 ### 方法一：让 Codex 安装（推荐）
 
-在 Codex 中输入：
+在 Codex 桌面端输入 `/`，选择 `skill-installer`，然后发送：
+
+```text
+请安装这个 Skill：
+https://github.com/yuanCodeLab/codex-advisor-skill/tree/main/advisor
+```
+
+也可以直接使用文本形式：
 
 ```text
 $skill-installer 请安装这个 Skill：
@@ -74,7 +81,13 @@ advisor/
 
 ## 使用
 
-该 Skill 禁止隐式触发。每次使用时都需要明确输入 `$advisor`。
+该 Skill 禁止隐式触发，需要由用户明确选择。Codex 桌面端推荐输入 `/` 打开菜单，选择 `advisor`，然后填写任务；也可以直接在消息中输入 `$advisor`。两种方式都会显式调用同一个 Skill。
+
+### Codex 桌面端
+
+1. 在输入框中输入 `/`。
+2. 从菜单中选择 `advisor`。
+3. 在插入的 Skill 后面填写任务并发送。
 
 ### 一般调用
 
@@ -114,7 +127,7 @@ $advisor 这个问题经过以下排查仍未定位：
 
 ## 本地效果记录
 
-每次显式调用 `$advisor` 时，Skill 会把开始和结束事件追加到：
+每次通过 `/` 菜单选择 `advisor` 或使用 `$advisor` 显式调用时，Skill 会把开始和结束事件追加到：
 
 ```text
 ${CODEX_HOME:-~/.codex}/advisor-metrics/events.jsonl
@@ -124,4 +137,4 @@ ${CODEX_HOME:-~/.codex}/advisor-metrics/events.jsonl
 
 ## 为什么必须显式调用
 
-调用额外顾问可能增加耗时、模型用量和协作复杂度。显式的 `$advisor` 相当于用户主动打开“独立专家复核”开关，可以避免普通问题误触发 Astra，也让效果记录的任务边界更清晰。
+调用额外顾问可能增加耗时、模型用量和协作复杂度。通过 `/` 菜单选择 `advisor` 或输入 `$advisor`，相当于用户主动打开“独立专家复核”开关，可以避免普通问题误触发 Astra，也让效果记录的任务边界更清晰。
